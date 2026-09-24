@@ -329,8 +329,10 @@ async function listOpenIssueTitles(theoses: ExtensionAPI, repo: string, cwd: str
 
 export default function (theoses: ExtensionAPI) {
 	theoses.on("agent_settled", async (_event, ctx: ExtensionContext) => {
-		const sessionId = ctx.sessionManager.getSessionId();
-		const entries = ctx.sessionManager.getEntries() as any[];
+		const sm = ctx.sessionManager;
+		if (!sm) return;
+		const sessionId = sm.getSessionId();
+		const entries = sm.getEntries() as any[];
 		const { messages, taskId } = currentTask(entries);
 		if (messages.length === 0) return;
 
