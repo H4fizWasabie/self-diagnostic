@@ -3,7 +3,7 @@
 // exists so extension CI can typecheck without building the whole engine.
 declare module "theoses-coding-agent" {
 	export interface ExtensionContext {
-		cwd?: string;
+		cwd: string;
 		sessionManager?: {
 			getSessionId(): string;
 			getEntries(): unknown[];

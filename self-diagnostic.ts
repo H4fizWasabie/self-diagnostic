@@ -4,7 +4,7 @@
 //
 // Phase A of the self-eval watcher (idea: ~/idea-folder/2026-09-18-self-eval-watcher.md).
 // Checks:
-//   1. repeated-bash-failure  — same bash command failed >=3 times in one task
+//   1. repeated-bash-failure  — same bash command failed >=3 times in a row with no edit/write between
 //   2. error-retry-streak     — >=3 consecutive assistant turns ended stopReason "error"
 //   3. gate-breach            — Edit/Write into theoses2 source with no gh issue/pr create
 //                               anywhere in the session (warn-only: needs human review)
@@ -78,38 +78,53 @@ function contentText(message: AnyMessage): string {
 		.join("\n");
 }
 
-function findRepeatedBashFailures(messages: AnyMessage[]): Finding[] {
-	const failureCounts = new Map<string, number>();
-	const failureSamples = new Map<string, string>();
+const FILE_CHANGING_TOOLS = new Set(["edit", "write", "multiedit"]);
+
+// Counts failures of the same command only while nothing changed in between: an edit/write resets every
+// streak, and a success resets that command's streak. Issue #407 (2026-09-28) was a normal fix-and-rerun
+// loop - the same verify command failed three times with an edit before each rerun - and got filed as
+// "stuck"; what this check exists for is rerunning a failing command unchanged.
+export function findRepeatedBashFailures(messages: AnyMessage[]): Finding[] {
+	const results = new Map<string, AnyMessage>();
+	for (const m of messages) if (m?.role === "toolResult") results.set(m.toolCallId, m);
+
+	const streaks = new Map<string, number>();
+	const worst = new Map<string, { count: number; lastError: string }>();
 
 	for (const message of messages) {
 		if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
 		for (const item of message.content) {
-			if (item?.type !== "toolCall" || item.name !== "bash") continue;
+			if (item?.type !== "toolCall") continue;
+			if (FILE_CHANGING_TOOLS.has(item.name)) {
+				streaks.clear();
+				continue;
+			}
+			if (item.name !== "bash") continue;
 			const command = typeof item.arguments?.command === "string" ? item.arguments.command : undefined;
-			if (!command) continue;
-
-			const result = messages.find(
-				(m) => m?.role === "toolResult" && m.toolCallId === item.id,
-			);
-			if (!result?.isError) continue;
+			const result = results.get(item.id);
+			if (!command || !result) continue;
 
 			const key = normalizeCommand(command);
-			failureCounts.set(key, (failureCounts.get(key) ?? 0) + 1);
-			if (!failureSamples.has(key)) {
-				failureSamples.set(key, contentText(result).slice(0, 500));
+			if (!result.isError) {
+				streaks.delete(key);
+				continue;
+			}
+			const count = (streaks.get(key) ?? 0) + 1;
+			streaks.set(key, count);
+			if (count >= (worst.get(key)?.count ?? 0)) {
+				worst.set(key, { count, lastError: contentText(result).slice(-500) });
 			}
 		}
 	}
 
 	const findings: Finding[] = [];
-	for (const [command, count] of failureCounts) {
+	for (const [command, { count, lastError }] of worst) {
 		if (count < MIN_REPEATED_FAILURES) continue;
 		findings.push({
 			kind: "repeated-bash-failure",
 			key: command,
-			summary: `Bash command failed ${count} times in one task: \`${command}\``,
-			detail: `Command:\n\`\`\`\n${command}\n\`\`\`\n\nFailed ${count} times. Last error output:\n\`\`\`\n${failureSamples.get(command) ?? ""}\n\`\`\``,
+			summary: `Bash command failed ${count} times in a row with no edits in between: \`${command}\``,
+			detail: `Command:\n\`\`\`\n${command}\n\`\`\`\n\nFailed ${count} times in a row with no file edits in between. Last error output:\n\`\`\`\n${lastError}\n\`\`\``,
 		});
 	}
 	return findings;
