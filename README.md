@@ -6,4 +6,5 @@ repeated bash failures, error-retry streaks, edit-gate breaches, procura-via-bas
 
 Single-file extension (`self-diagnostic.ts`), deployed live at
 `~/.theoses/agent/extensions/self-diagnostic.ts` on the Theoses VPS.
-CI: `tsc --noEmit` against theoses2 typings on every push/PR touching `*.ts`.
+CI: `tsc --noEmit` against theoses2 typings, then `node --experimental-strip-types --test`
+(`self-diagnostic.test.ts`), on every push/PR touching `*.ts`.
